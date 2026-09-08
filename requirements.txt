@@ -4,3 +4,5 @@ zhipuai
 pyttsx3
 pillow
 mss
+bleak
+# 注：ar_overlay 的 YOLO 模式需 numpy<2 兼容 torch（当前 numpy==1.26.4 已验证）
