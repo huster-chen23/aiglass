@@ -19,3 +19,5 @@ find_leftover.py
 verify_text.py
 capture_real_frame.py
 snapshot_check.jpg
+*.apk
+!hr_hud_preview.jpg
