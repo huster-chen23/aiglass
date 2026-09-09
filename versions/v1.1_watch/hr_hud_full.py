@@ -30,7 +30,10 @@ import time
 import cv2
 import numpy as np
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+_HERE = os.path.dirname(os.path.abspath(__file__))          # versions/v1.1_watch
+ROOT = os.path.dirname(os.path.dirname(_HERE))              # ai_glasses_solo
+sys.path.insert(0, _HERE)
+sys.path.insert(0, ROOT)   # 项目根目录（brain_api/config 所在）
 import gtp  # noqa: E402
 
 try:
@@ -436,7 +439,7 @@ def glm_scene_async(frame, question):
         try:
             answer = brain_api.ask_vision(frame, question)
         except Exception as e:
-            answer = "GLM 离线：%s" % e
+            answer = "GLM 异常：%s（检查 config_local.py 的 API Key）" % e
         put("glm", answer)
         confirm_speak(answer)
     threading.Thread(target=run, daemon=True).start()

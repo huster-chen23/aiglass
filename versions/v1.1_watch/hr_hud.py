@@ -23,7 +23,10 @@ import time
 import cv2
 import numpy as np
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+_HERE = os.path.dirname(os.path.abspath(__file__))          # versions/v1.1_watch
+_ROOT = os.path.dirname(os.path.dirname(_HERE))             # ai_glasses_solo
+sys.path.insert(0, _HERE)
+sys.path.insert(0, _ROOT)   # 项目根目录（brain_api/config 所在）
 import gtp  # noqa: E402
 import json as _json
 import re as _re
