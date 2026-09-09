@@ -14,8 +14,11 @@ try:
 except ImportError:
     pass
 
-# 视觉对话模型（glm-4v-flash 免费）
+# 视觉对话模型（glm-4v-flash 免费）；如 glm-5.3-flash 支持图像，可一并替换
 VISION_MODEL = "glm-4v-flash"
+# 文本对话/意图识别主力模型（需资源包）+ 免费回退（429/无资源包时自动切换）
+TEXT_MODEL = "glm-5.3-flash"
+TEXT_FALLBACK = "glm-4-flash"
 
 # UDP 图传参数（与课程实验一致）
 PC_IP = "127.0.0.1"

@@ -23,13 +23,11 @@ def main():
         sys.exit(1)
     print("Key: %s...%s" % (config.API_KEY[:6], config.API_KEY[-4:]))
 
-    print("\n[1/2] 文本对话测试 ...")
+    print("\n[1/2] 文本对话测试（主力 %s，无资源包自动回退 %s）..."
+          % (config.TEXT_MODEL, config.TEXT_FALLBACK))
     try:
-        resp = brain_api.get_client().chat.completions.create(
-            model="glm-4-flash",
-            messages=[{"role": "user",
-                       "content": "回复两个字：正常"}],
-        )
+        resp = brain_api.chat_complete(
+            [{"role": "user", "content": "回复两个字：正常"}])
         print("回答:", resp.choices[0].message.content.strip())
     except Exception as e:
         print("文本测试失败:", e)

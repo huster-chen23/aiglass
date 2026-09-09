@@ -275,12 +275,10 @@ def glm_chat_async(text):
     """GLM 多轮对话：回答显示到 HUD 横幅 + 语音播报。"""
     def run():
         try:
-            client = brain_api.get_client()
             msgs = ([{"role": "system", "content": CHAT_SYS}]
                     + CHAT_HISTORY[-8:]
                     + [{"role": "user", "content": text}])
-            resp = client.chat.completions.create(
-                model="glm-4-flash", messages=msgs)
+            resp = brain_api.chat_complete(msgs)
             reply = resp.choices[0].message.content.strip()
             CHAT_HISTORY.append({"role": "user", "content": text})
             CHAT_HISTORY.append({"role": "assistant", "content": reply})
@@ -299,9 +297,9 @@ def ai_toggle(text):
     action = None
     if HAS_AI and text:
         try:
-            resp = brain_api.get_client().chat.completions.create(
-                model="glm-4-flash",
-                messages=[{"role": "user", "content": INTENT_PROMPT + text}])
+            resp = brain_api.chat_complete(
+                [{"role": "user", "content": INTENT_PROMPT + text}])
+            raw = resp.choices[0].message.content.strip()
             raw = resp.choices[0].message.content.strip()
             m = _re.search(r"\{.*\}", raw, _re.S)
             if m:

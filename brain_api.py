@@ -27,6 +27,20 @@ def get_client():
     return _client
 
 
+def chat_complete(messages):
+    """文本对话统一入口：主力 TEXT_MODEL → 无资源包(429/1113)自动回退 TEXT_FALLBACK。"""
+    client = get_client()
+    try:
+        return client.chat.completions.create(
+            model=config.TEXT_MODEL, messages=messages)
+    except Exception as e:
+        s = str(e)
+        if "429" in s or "1113" in s:
+            return client.chat.completions.create(
+                model=config.TEXT_FALLBACK, messages=messages)
+        raise
+
+
 def ask_vision(frame_bgr, question="用一句简短中文说明画面里有什么"):
     """把一帧 BGR 图发给 GLM 视觉模型，返回回答文本。"""
     ok, buf = cv2.imencode(".jpg", frame_bgr,
