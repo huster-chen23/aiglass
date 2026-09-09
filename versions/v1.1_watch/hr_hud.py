@@ -25,6 +25,16 @@ import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import gtp  # noqa: E402
+import json as _json
+import re as _re
+
+try:
+    import brain_api
+    import config as _cfg
+    HAS_AI = bool(_cfg.API_KEY) and "填入" not in _cfg.API_KEY
+except Exception:
+    brain_api = None
+    HAS_AI = False
 
 CYAN = (255, 210, 60)     # 钛金
 GOLD = (80, 200, 255)
@@ -40,7 +50,7 @@ STATE = {"boost": False}
 LOCK = threading.Lock()
 ST = {"bpm": 0, "batt": 84, "frames": 0, "crc": 0, "skip": 0,
       "tx_bpm": None, "trend": [], "last_tx": 0.0, "measuring": True,
-      "frame": None}
+      "frame": None, "hr_visible": True}
 
 
 def put(key, value):
@@ -64,11 +74,12 @@ def sim_thread(stop):
     batt_th = gtp.DeltaThrottle(min_delta=1, max_interval=25)
     while not stop.is_set():
         t += 1
-        target = 118 + 26 * math.sin(t / 18.0)
         if STATE.get("boost"):
-            target = 178
-        bpm += (target - bpm) * 0.25 + random.uniform(-2, 2)
-        bpm = max(58, min(185, bpm))
+            bpm = min(185, bpm + 6)          # 冲刺：快速拉升
+        else:
+            # 平稳随机跳动：小步随机游走 + 向基准 96 缓慢回归
+            bpm += random.choice([-2, -1, 0, 1, 2]) + (96.0 - bpm) * 0.05
+            bpm = max(62, min(148, bpm))
 
         if throttle.should_send(bpm):
             seq += 1
@@ -190,22 +201,30 @@ def draw_hud(img):
         cv2.putText(img, line, (18, 30 + i * 20), FONT, 0.5, CYAN, 1,
                     cv2.LINE_AA)
 
-    # ---- 右上：大号心率 + 趋势 ----
-    hr_color = RED if (measuring and bpm >= 150) else \
-        (GREEN if measuring else GREY)
-    cv2.putText(img, "HR", (w - 210, 60), FONT, 0.8, CYAN, 1, cv2.LINE_AA)
-    if measuring:
-        cv2.putText(img, str(bpm), (w - 215, 130), FONT, 2.2, hr_color, 4,
+    # ---- 右上：大号心率 + 趋势（可被 AI 关闭） ----
+    hr_visible = get("hr_visible")
+    measuring = measuring and bpm > 0 and hr_visible
+    if hr_visible:
+        hr_color = RED if (measuring and bpm >= 150) else \
+            (GREEN if measuring else GREY)
+        cv2.putText(img, "HR", (w - 210, 60), FONT, 0.8, CYAN, 1,
                     cv2.LINE_AA)
-        cv2.putText(img, "bpm", (w - 90, 130), FONT, 0.9, hr_color, 2,
-                    cv2.LINE_AA)
-        ar, ac = trend_arrow(tr)
-        cv2.putText(img, ar, (w - 150, 165), FONT, 0.7, ac, 2, cv2.LINE_AA)
+        if measuring:
+            cv2.putText(img, str(bpm), (w - 215, 130), FONT, 2.2, hr_color,
+                        4, cv2.LINE_AA)
+            cv2.putText(img, "bpm", (w - 90, 130), FONT, 0.9, hr_color, 2,
+                        cv2.LINE_AA)
+            ar, ac = trend_arrow(tr)
+            cv2.putText(img, ar, (w - 150, 165), FONT, 0.7, ac, 2,
+                        cv2.LINE_AA)
+        else:
+            cv2.putText(img, "--", (w - 150, 120), FONT, 2.0, GREY, 3,
+                        cv2.LINE_AA)
+            cv2.putText(img, "NO SIGNAL", (w - 220, 160), FONT, 0.6, GREY,
+                        1, cv2.LINE_AA)
     else:
-        cv2.putText(img, "--", (w - 150, 120), FONT, 2.0, GREY, 3,
-                    cv2.LINE_AA)
-        cv2.putText(img, "NO SIGNAL", (w - 220, 160), FONT, 0.6, GREY, 1,
-                    cv2.LINE_AA)
+        cv2.putText(img, "HR PANEL OFF", (w - 260, 60), FONT, 0.6, GREY,
+                    1, cv2.LINE_AA)
 
     # ---- 告警横幅 ----
     if measuring and bpm >= 150:
@@ -239,6 +258,66 @@ def synthetic_frame():
     return img
 
 
+INTENT_PROMPT = ("你是智能眼镜显示控制器。只输出一个 JSON 对象，禁止输出任何其他文字："
+                 '{"action":"hide","target":"hr"} 表示关闭心率显示，'
+                 '{"action":"show","target":"hr"} 表示打开心率显示。'
+                 "用户指令：")
+
+
+def ai_toggle(text):
+    """自然语言 → 开/关指令。GLM 意图识别优先，失败时本地关键词兜底。"""
+    text = text.strip()
+    action = None
+    if HAS_AI and text:
+        try:
+            resp = brain_api.get_client().chat.completions.create(
+                model="glm-4-flash",
+                messages=[{"role": "user",
+                           "content": INTENT_PROMPT + text}])
+            raw = resp.choices[0].message.content.strip()
+            m = _re.search(r"\{.*\}", raw, _re.S)
+            if m:
+                action = _json.loads(m.group(0)).get("action")
+        except Exception as e:
+            print("[AI] 调用失败，本地规则兜底:", e)
+    if action not in ("show", "hide"):
+        if any(k in text for k in ("关", "隐藏", "收起")):
+            action = "hide"
+        elif any(k in text for k in ("开", "显示", "亮")):
+            action = "show"
+    return action
+
+
+def confirm_speak(text):
+    try:
+        if brain_api is not None:
+            brain_api.speak(text)
+    except Exception:
+        pass
+
+
+def input_thread(stop):
+    """控制台自然语言指令线程：交给 GLM 做意图识别。"""
+    for line in sys.stdin:
+        cmd = line.strip()
+        if not cmd:
+            continue
+        if cmd.lower() in ("q", "quit", "exit"):
+            stop.set()
+            break
+        action = ai_toggle(cmd)
+        if action == "hide":
+            put("hr_visible", False)
+            print("[执行] 心率面板已关闭")
+            confirm_speak("心率面板已关闭")
+        elif action == "show":
+            put("hr_visible", True)
+            print("[执行] 心率面板已开启")
+            confirm_speak("心率面板已开启")
+        else:
+            print("[AI] 未识别指令，可用：打开/关闭心率显示")
+
+
 def main():
     ap = argparse.ArgumentParser(description="v1.1 心率 HUD（sim + GTP）")
     ap.add_argument("--source", choices=["camera", "none"], default="camera")
@@ -255,7 +334,11 @@ def main():
         threading.Thread(target=camera_thread, args=(stop, cap),
                          daemon=True).start()
     threading.Thread(target=sim_thread, args=(stop,), daemon=True).start()
+    if not args.selftest:
+        threading.Thread(target=input_thread, args=(stop,),
+                         daemon=True).start()
     print("HR HUD 已启动：h=模拟测量开关 n=模拟冲刺 s=截图 q=退出")
+    print("控制台输入自然语言可控制显示（如：关闭心率显示）")
 
     if args.selftest:
         deadline = time.time() + 10
@@ -273,7 +356,7 @@ def main():
         stop.set()
         return
 
-    while True:
+    while not stop.is_set():
         frame = get("frame")
         if frame is None:
             frame = synthetic_frame()
