@@ -242,6 +242,11 @@ def sim_thread(stop):
 
 
 # ---------- GLM ----------
+# 视觉意图关键词：命中则带画面问 GLM，否则走纯文字对话
+VISION_KEYS = ("看到", "看见", "识别", "看看", "画面", "眼前", "前面",
+               "周围", "这是", "什么", "读一下", "颜色", "多少", "写的是")
+
+
 def has_vision_intent(text):
     return any(k in text for k in VISION_KEYS)
 
