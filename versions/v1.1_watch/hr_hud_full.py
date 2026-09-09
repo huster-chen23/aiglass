@@ -261,6 +261,33 @@ INTENT_PROMPT = ("你是智能眼镜显示控制器。只输出一个 JSON 对�
                  '{"action":"show","target":"hr"} 表示打开心率显示。'
                  "用户指令：")
 
+CHAT_SYS = ("你是户外 AI 眼镜的语音助手贾维斯（J.A.R.V.I.S.）。"
+            "回答简短实用，不超过 60 字，语气冷静专业。")
+CHAT_HISTORY = []   # 多轮对话上下文（保留最近 8 条）
+
+
+def glm_chat_async(text):
+    """GLM 多轮对话：回答显示到 HUD 横幅 + 语音播报。"""
+    def run():
+        try:
+            client = brain_api.get_client()
+            msgs = ([{"role": "system", "content": CHAT_SYS}]
+                    + CHAT_HISTORY[-8:]
+                    + [{"role": "user", "content": text}])
+            resp = client.chat.completions.create(
+                model="glm-4-flash", messages=msgs)
+            reply = resp.choices[0].message.content.strip()
+            CHAT_HISTORY.append({"role": "user", "content": text})
+            CHAT_HISTORY.append({"role": "assistant", "content": reply})
+            del CHAT_HISTORY[:-8]
+            put("glm", "贾维斯: " + reply)
+            print("[贾维斯]", reply)
+            confirm_speak(reply)
+        except Exception as e:
+            print("[GLM] 对话失败:", e)
+            put("glm", "GLM 对话失败: %s" % e)
+    threading.Thread(target=run, daemon=True).start()
+
 
 def ai_toggle(text):
     text = text.strip()
@@ -446,20 +473,40 @@ def glm_scene_async(frame, question):
 
 
 def input_thread(stop):
-    """控制台：自然语言控制 + 特殊命令。"""
+    """控制台：自然语言控制 + GLM 对话模式 + 特殊命令。"""
+    chat_mode = False
     for line in sys.stdin:
         cmd = line.strip()
         if not cmd:
             continue
-        if cmd.lower() in ("q", "quit", "exit"):
+        if cmd.lower() in ("q", "quit", "exit") and not chat_mode:
             stop.set()
             break
+        # ---- 对话模式 ----
+        if chat_mode:
+            if cmd.lower() in ("exit", "退出", "q"):
+                chat_mode = False
+                print("[已退出对话模式，回到指令模式]")
+                continue
+            glm_chat_async(cmd)
+            continue
+        # ---- 指令模式 ----
+        if cmd.lower() in ("对话", "chat"):
+            chat_mode = True
+            print("[对话模式] 直接和贾维斯聊天；输入 退出 返回指令模式")
+            continue
         if "识别" in cmd or "看看" in cmd or "场景" in cmd:
             f = get("frame")
             if f is not None:
                 glm_scene_async(
                     f.copy(), "像钢铁侠的贾维斯一样，用简短中文列出你看到的物体和场景")
                 print("[GLM] 场景识别中 ...")
+            continue
+        if cmd in ("截图", "shot"):
+            img = get_view()
+            fn = time.strftime("full_shot_%H%M%S.jpg")
+            cv2.imwrite(fn, img)
+            print("截图", fn)
             continue
         action = ai_toggle(cmd)
         if action == "hide":
@@ -471,7 +518,7 @@ def input_thread(stop):
             print("[执行] 心率面板已开启")
             confirm_speak("心率面板已开启")
         else:
-            print("[AI] 未识别指令。可用：打开/关闭心率显示、识别场景")
+            glm_chat_async(cmd)   # 未知指令 → 交给贾维斯对话
 
 
 def main():
@@ -507,7 +554,7 @@ def main():
         threading.Thread(target=input_thread, args=(stop,),
                          daemon=True).start()
     print("v1.1 完全体已启动：d=开关检测 n=GLM识别场景 s=截图 q=退出")
-    print("控制台输入自然语言可控制显示（如：关闭心率显示）")
+    print("控制台：输入 对话 进入 GLM 聊天；或直接说 关闭心率显示 / 识别场景")
 
     if args.selftest:
         deadline = time.time() + 12
