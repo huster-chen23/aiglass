@@ -242,24 +242,24 @@ def sim_thread(stop):
 
 
 # ---------- GLM ----------
-def glm_scene_async(frame, question):
+def has_vision_intent(text):
+    return any(k in text for k in VISION_KEYS)
+
+
+def glm_vision_async(frame, question):
+    """带画面问答：当前帧 + 用户问题 → GLM 视觉 → 横幅 + 语音。"""
     def run():
         try:
-            answer = brain_api.ask_vision(frame, question)
+            answer = brain_api.ask_vision(
+                frame, "结合画面，用简短中文回答：" + question)
         except Exception as e:
-            answer = "GLM 离线：%s" % e
-        put("glm", answer)
-        try:
-            brain_api.speak(answer)
-        except Exception:
-            pass
+            answer = "GLM 异常：%s（检查 API Key 与网络）" % e
+        put("glm", "贾维斯: " + answer)
+        print("[贾维斯]", answer)
+        confirm_speak(answer)
+        CHAT_HISTORY.append({"role": "assistant", "content": answer})
+        del CHAT_HISTORY[:-8]
     threading.Thread(target=run, daemon=True).start()
-
-
-INTENT_PROMPT = ("你是智能眼镜显示控制器。只输出一个 JSON 对象，禁止输出任何其他文字："
-                 '{"action":"hide","target":"hr"} 表示关闭心率显示，'
-                 '{"action":"show","target":"hr"} 表示打开心率显示。'
-                 "用户指令：")
 
 CHAT_SYS = ("你是户外 AI 眼镜的语音助手贾维斯（J.A.R.V.I.S.）。"
             "回答简短实用，不超过 60 字，语气冷静专业。")
@@ -320,45 +320,6 @@ def confirm_speak(text):
 
 
 # ---------- HUD 绘制 ----------
-def corner_box(img, x, y, w, h, color=CYAN, t=2, ratio=0.3):
-    L = max(8, int(min(w, h) * ratio))
-    for (cx, cy, dx, dy) in ((x, y, 1, 1), (x + w, y, -1, 1),
-                             (x, y + h, 1, -1), (x + w, y + h, -1, -1)):
-        cv2.line(img, (cx, cy), (cx + dx * L, cy), color, t)
-        cv2.line(img, (cx, cy), (cx, cy + dy * L), color, t)
-
-
-def chip(img, x, y, text, color=CYAN):
-    (tw, th), _ = cv2.getTextSize(text, FONT, 0.52, 1)
-    y = max(24, y)
-    cv2.rectangle(img, (x, y - th - 10), (x + tw + 12, y + 4), (25, 25, 25), -1)
-    cv2.rectangle(img, (x, y - th - 10), (x + tw + 12, y + 4), color, 1)
-    cv2.putText(img, text, (x + 6, y), FONT, 0.52, color, 1, cv2.LINE_AA)
-
-
-def panel(img, x, y, w, lines, color=CYAN):
-    h = 18 * len(lines) + 16
-    roi = img[y:y + h, x:x + w]
-    if roi.size:
-        img[y:y + h, x:x + w] = (roi * 0.35).astype(np.uint8)
-    cv2.rectangle(img, (x, y), (x + w, y + h), color, 1)
-    for i, line in enumerate(lines):
-        cv2.putText(img, line, (x + 8, y + 22 + i * 18), FONT, 0.46,
-                    color, 1, cv2.LINE_AA)
-
-
-def trend_arrow(tr):
-    vals = [v for v in tr if v > 0]
-    if len(vals) < 2:
-        return "-", WHITE
-    diff = vals[-1] - vals[-2]
-    if diff >= 2:
-        return "UP", (80, 170, 255)
-    if diff <= -2:
-        return "DOWN", (200, 170, 80)
-    return "STABLE", WHITE
-
-
 def draw_hud(img, dets, det_name, det_ms, det_on):
     bpm = get("bpm")
     batt = get("batt")
@@ -461,46 +422,33 @@ def trend_arrow(tr):
 
 
 # ---------- 主程序 ----------
-def glm_scene_async(frame, question):
-    def run():
-        try:
-            answer = brain_api.ask_vision(frame, question)
-        except Exception as e:
-            answer = "GLM 异常：%s（检查 config_local.py 的 API Key）" % e
-        put("glm", answer)
-        confirm_speak(answer)
-    threading.Thread(target=run, daemon=True).start()
-
-
 def input_thread(stop):
-    """控制台：自然语言控制 + GLM 对话模式 + 特殊命令。"""
+    """控制台：智能路由（视觉问答 / 文字对话 / 界面控制）。"""
     chat_mode = False
     for line in sys.stdin:
         cmd = line.strip()
         if not cmd:
             continue
-        if cmd.lower() in ("q", "quit", "exit") and not chat_mode:
+        low = cmd.lower()
+        if low in ("q", "quit", "exit") and not chat_mode:
             stop.set()
             break
-        # ---- 对话模式 ----
+        # ---- 对话模式：视觉问题走画面，其余纯文字 ----
         if chat_mode:
-            if cmd.lower() in ("exit", "退出", "q"):
+            if low in ("exit", "退出"):
                 chat_mode = False
                 print("[已退出对话模式，回到指令模式]")
                 continue
-            glm_chat_async(cmd)
+            f = get("frame")
+            if has_vision_intent(cmd) and f is not None:
+                glm_vision_async(f.copy(), cmd)
+            else:
+                glm_chat_async(cmd)
             continue
         # ---- 指令模式 ----
-        if cmd.lower() in ("对话", "chat"):
+        if low in ("对话", "chat"):
             chat_mode = True
             print("[对话模式] 直接和贾维斯聊天；输入 退出 返回指令模式")
-            continue
-        if "识别" in cmd or "看看" in cmd or "场景" in cmd:
-            f = get("frame")
-            if f is not None:
-                glm_scene_async(
-                    f.copy(), "像钢铁侠的贾维斯一样，用简短中文列出你看到的物体和场景")
-                print("[GLM] 场景识别中 ...")
             continue
         if cmd in ("截图", "shot"):
             img = get_view()
@@ -513,12 +461,20 @@ def input_thread(stop):
             put("hr_visible", False)
             print("[执行] 心率面板已关闭")
             confirm_speak("心率面板已关闭")
-        elif action == "show":
+            continue
+        if action == "show":
             put("hr_visible", True)
             print("[执行] 心率面板已开启")
             confirm_speak("心率面板已开启")
+            continue
+        # 视觉意图：带画面问 GLM（v1.0 的核心体验）
+        f = get("frame")
+        if f is not None and (has_vision_intent(cmd) or cmd.endswith("？")
+                              or cmd.endswith("?")):
+            glm_vision_async(f.copy(), cmd)
+            print("[视觉] 结合画面回答中 ...")
         else:
-            glm_chat_async(cmd)   # 未知指令 → 交给贾维斯对话
+            glm_chat_async(cmd)   # 其余 → 贾维斯文字对话
 
 
 def main():
